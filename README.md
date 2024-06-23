@@ -1,3 +1,4 @@
 # encore-test
-this is main4
-second check
+hello
+test in main4
+
