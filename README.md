@@ -1,2 +1,4 @@
 # encore-test
-hello 
+hello
+test in main2
+
