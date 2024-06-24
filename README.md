@@ -1,3 +1,3 @@
 # encore-test
 hello
-new test in main2
+new test in main3
