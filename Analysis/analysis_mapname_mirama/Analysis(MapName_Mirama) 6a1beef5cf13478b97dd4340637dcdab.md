@@ -1,14 +1,14 @@
 # Analysis(MapName_Mirama)
 
-![그림1. whitezone의 중심](Untitled.png)
+![그림1. whitezone의 중심](Analysis(MapName_Mirama)%206a1beef5cf13478b97dd4340637dcdab/Untitled.png)
 
 그림1. whitezone의 중심
 
-![그림2. alive_user들의 기하학적 중심점](Untitled%201.png)
+![그림2. alive_user들의 기하학적 중심점](Analysis(MapName_Mirama)%206a1beef5cf13478b97dd4340637dcdab/Untitled%201.png)
 
 그림2. alive_user들의 기하학적 중심점
 
-![그림3. hitezone의 중심과 alive_user들의 중심의 거리](Untitled%202.png)
+![그림3. hitezone의 중심과 alive_user들의 중심의 거리](Analysis(MapName_Mirama)%206a1beef5cf13478b97dd4340637dcdab/Untitled%202.png)
 
 그림3. hitezone의 중심과 alive_user들의 중심의 거리
 
@@ -39,12 +39,7 @@
 import requests
 import matplotlib.pyplot as plt
 from scipy.stats import shapiro, spearmanr, probplot
-
-# 가설 설명
-print("""
-- H0(귀무가설): 살아있는 유저들의 위치와 자기장 중심의 위치는 무관하다. 즉, 자기장은 무작위로 잡힌다.
-- H1(대립가설): 살아있는 유저들의 위치가 자기장 중심의 위치에 영향을 미친다. 즉, 자기장은 살아있는 유저들의 위치를 고려하여 잡힌다.
-""")
+import numpy as np
 
 # GET 요청을 보낼 기본 URL
 base_url = 'http://192.168.0.79:5000'
@@ -86,15 +81,31 @@ for i in range(len(data)):
         distance_list.append(phase_list)  # 반복문 밖으로 이동
         phase_coordinates.append(coordinates_list)
 
-# 각 페이즈별 x축 범위 설정
-x_limits = [581999, 203699, 112034, 67220, 36971, 18485, 9242, 5000]
+# 이상치 제거 함수 (상한치만 고려)
+def remove_upper_outliers(data):
+    Q1 = np.percentile(data, 25)
+    Q3 = np.percentile(data, 75)
+    IQR = Q3 - Q1
+    upper_bound = Q3 + 3.5 * IQR
+    return [x for x in data if x <= upper_bound]
+
+# 초기 x축 끝값 설정 및 페이즈별 줄어드는 비율
+x_end_values = [400000, 219970.803617571057, 131740.25348840904, 78900.030827725155, 51230.391445946857, 33270.6639480441026, 21600.2976675614, 15100.0693623677593]
 
 # 각 페이즈별로 샤피로-윌크 검정 수행 및 히스토그램 시각화
 num_phases = len(distance_list)
 fig, axes = plt.subplots(2, num_phases, figsize=(25, 10))
 
+# 상관분석 결과 저장
+# 가설 설명
+print("""
+- H0(귀무가설): 데이터는 정규분포를 따른다.
+- H1(대립가설): 데이터는 정규분포를 따르지 않는다.
+""")
+correlation_results = []
+
 for i in range(num_phases):
-    specific_phase = distance_list[i]
+    specific_phase = remove_upper_outliers(distance_list[i])  # 상한치만 고려하여 이상치 제거
     
     # 샤피로-윌크 검정
     stat, p_value = shapiro(specific_phase)
@@ -105,8 +116,8 @@ for i in range(num_phases):
         print(f'Phase {i+1} 데이터는 정규 분포를 따르지 않습니다 (귀무가설 기각)')
 
     # 히스토그램 그리기
-    bin_width = x_limits[i] / 20  # 구간을 20개로 나누기
-    bins = range(0, int(max(specific_phase) + bin_width), int(bin_width))
+    x_end = x_end_values[i]
+    bins = np.linspace(0, x_end, 35)  # 35개의 bin으로 나누기
     
     counts, bins, _ = axes[0, i].hist(specific_phase, bins=bins, edgecolor='black', alpha=0.5)
     bin_centers = 0.5 * (bins[1:] + bins[:-1])
@@ -114,111 +125,139 @@ for i in range(num_phases):
     axes[0, i].set_title(f'Histogram of Phase {i+1}')
     axes[0, i].set_xlabel('Distance')
     axes[0, i].set_ylabel('Frequency')
-    axes[0, i].set_xlim(0, x_limits[i])
+    axes[0, i].set_xlim(0, x_end)
+    
+    # x축 라벨링 변경
+    locator = plt.FixedLocator(bin_centers)
+    labels = [str(idx + 1) for idx in range(len(bin_centers))]
+    formatter = plt.FixedFormatter(labels)
+    axes[0, i].xaxis.set_major_locator(locator)
+    axes[0, i].xaxis.set_major_formatter(formatter)
+    
+    # bin_width 출력
+    print(f"Phase {i+1} - Bin Width: {x_end / 35}")
 
     # QQ 플롯 생성
     probplot(specific_phase, dist="norm", plot=axes[1, i])
     axes[1, i].set_title(f'QQ Plot of Phase {i+1}')
     axes[1, i].set_xlabel('Theoretical Quantiles')
     axes[1, i].set_ylabel('Sample Quantiles')
+    
+    
+    # 스피어만 상관분석
+    corr, p_value = spearmanr(bin_centers, counts)
+    correlation_results.append((i + 1, corr, p_value))
 
 plt.tight_layout()
 plt.show()
 
-# 스피어만 상관분석(정규분포를 따르지 않아서 피어슨 대신 스피어만분석 사용) 
-for i in range(len(distance_list)):
-    specific_phase = distance_list[i]
-    distances = list(range(len(specific_phase)))
-    
-    # 거리 데이터에 대한 스피어만 상관분석
-    corr, p_value = spearmanr(distances, specific_phase)
-    print(f'Phase {i+1} - 스피어만 상관분석: 상관계수={corr}, p-value={p_value}')
+# 가설 설명
+print("""
+- H0(귀무가설): 살아있는 유저들의 위치와 자기장 중심의 위치는 무관하다. 즉, 자기장은 무작위로 잡힌다.
+- H1(대립가설): 살아있는 유저들의 위치가 자기장 중심의 위치에 영향을 미친다. 즉, 자기장은 살아있는 유저들의 위치를 고려하여 잡힌다.
+""")
+# 스피어만 상관분석 결과 출력
+for result in correlation_results:
+    phase, corr, p_value = result
+    print(f'Phase {phase} - 스피어만 상관분석: 상관계수={corr}, p-value={p_value}')
 
 ```
 
-![Untitled](e6a91d02-e681-4dc4-8f11-4e6457c20587.png)
-
-![Untitled](460077d7-d3a0-43f3-b3be-1ab14e2c3e4b.png)
-
-![Untitled](4b64b089-4b1b-4d1e-a86e-fbfdf0474d2f.png)
-
-![Untitled](Untitled%203.png)
-
 - 그림3 의 히스토그램
 
-![Untitled](Untitled%204.png)
+![Untitled](Analysis(MapName_Mirama)%206a1beef5cf13478b97dd4340637dcdab/Untitled%203.png)
 
-![Untitled](Untitled%205.png)
+![Untitled](Analysis(MapName_Mirama)%206a1beef5cf13478b97dd4340637dcdab/Untitled%204.png)
 
-![Untitled](Untitled%206.png)
+## 정규분포 확인
 
-![Untitled](Untitled%207.png)
+1. 샤피로-윌크 검정
 
-### QQ plot 해석
+![Untitled](Analysis(MapName_Mirama)%206a1beef5cf13478b97dd4340637dcdab/Untitled%205.png)
 
-- **전체적인 형태**: 모든 페이즈에서 점들이 대각선에서 벗어나 있는 것을 볼 수 있습니다. 특히 양 끝 부분에서 더 많이 벗어나 있습니다. 이는 데이터가 정규 분포를 따르지 않는다는 것을 의미합니다.
-- **끝부분의 패턴**: 각 페이즈에서 끝부분의 점들이 대각선에서 멀리 벗어나 있는 것을 볼 수 있습니다. 이는 데이터의 꼬리가 정규 분포의 꼬리보다 두껍다는 것을 나타냅니다. 즉, 극단적인 값들이 더 많이 존재합니다.
+1. QQ-plot
 
-### 스피로-월크(정규분포 확인) → 정규분포 따르지 않기에 피어스만 상관분석
+![Untitled](Analysis(MapName_Mirama)%206a1beef5cf13478b97dd4340637dcdab/Untitled%206.png)
 
-![Untitled](Untitled%208.png)
+![Untitled](Analysis(MapName_Mirama)%206a1beef5cf13478b97dd4340637dcdab/Untitled%207.png)
 
-### 피어스만 상관분석 결과
+[각 Phase별 분석]
 
-![Untitled](Untitled%209.png)
+1. **Phase 1**:
+    - QQ 플롯에서 대부분의 데이터 점들이 대각선에 가까이 분포하고 있으나, 꼬리 부분에서 대각선에서 벗어나 있는 점들이 있습니다.
+    - 이는 Phase 1의 데이터가 전체적으로 정규분포에 근접하지만, 극단값(outlier)에서 정규분포를 따르지 않는다는 것을 의미합니다.
+2. **Phase 2**:
+    - QQ 플롯에서 중간 구간의 데이터 점들은 대각선에 가깝게 분포하고 있으나, 꼬리 부분에서 대각선에서 벗어나 있습니다.
+    - Phase 2의 데이터는 중심부에서는 정규분포를 따르지만, 극단값에서는 정규분포를 따르지 않습니다.
+3. **Phase 3**:
+    - 중간 구간의 데이터 점들이 대각선에 근접하지만, 극단값에서 벗어나 있는 경향이 있습니다.
+    - Phase 3의 데이터는 중심부에서는 정규분포에 가깝지만, 꼬리 부분에서는 정규분포를 따르지 않습니다.
+4. **Phase 4**:
+    - 중간 구간의 데이터 점들이 대각선에 가깝게 분포하지만, 끝부분에서 벗어나는 경향이 있습니다.
+    - Phase 4의 데이터는 중심부에서는 정규분포를 따르지만, 극단값에서는 정규분포를 따르지 않습니다.
+5. **Phase 5**:
+    - 중간 구간의 데이터 점들이 대각선에서 벗어나고 있으며, 꼬리 부분에서 대각선에서 크게 벗어나 있습니다.
+    - Phase 5의 데이터는 정규분포를 따르지 않는다는 것을 나타냅니다.
+6. **Phase 6**:
+    - QQ 플롯에서 데이터 점들이 대각선에서 크게 벗어나고 있습니다.
+    - 이는 Phase 6의 데이터가 정규분포를 따르지 않는다는 것을 의미합니다.
+7. **Phase 7**:
+    - 데이터 점들이 대각선에서 크게 벗어나고 있습니다.
+    - Phase 7의 데이터는 정규분포를 따르지 않는 것으로 보입니다.
+8. **Phase 8**:
+    - 데이터 점들이 대각선에서 벗어나 있으며, 특히 극단값에서 크게 벗어나고 있습니다.
+    - Phase 8의 데이터는 정규분포를 따르지 않는 것으로 보입니다.
 
-## 피어스만 상관분석 해석
+### 결론:
 
-### Phase 1
+- 모든 Phase에서 QQ 플롯을 보면, 중간 구간에서는 대체로 대각선에 근접하지만 꼬리 부분에서 크게 벗어나는 경향이 있습니다.
+- 이는 모든 Phase의 데이터가 정규분포를 따르지 않음을 시사합니다.
+- 이는 샤피로-윌크 검정 결과와도 일치합니다.
+- 따라서 모든 Phase에서 데이터는 정규분포를 따르지 않는 것으로 분석됩니다.
 
-- **상관계수**: -0.018 (매우 약한 음의 상관관계)
-- **p-value**: 0.760 (유의미하지 않음)
-- **해석**: 유저 위치와 자기장 중심 위치 간에 상관관계가 거의 없으며, 통계적으로 유의미하지 않음.
+상관관계 분석을 위해 정규분포를 알아본 결과 정규분포를 따르지 않기에 상관분석은 스피어만 상관분석으로 결정하였음. 
 
-### Phase 2
+## 상관관계 검증
 
-- **상관계수**: -0.033 (매우 약한 음의 상관관계)
-- **p-value**: 0.574 (유의미하지 않음)
-- **해석**: 유저 위치와 자기장 중심 위치 간에 상관관계가 거의 없으며, 통계적으로 유의미하지 않음.
+![Untitled](Analysis(MapName_Mirama)%206a1beef5cf13478b97dd4340637dcdab/Untitled%208.png)
 
-### Phase 3
+### 각 페이즈별 분석 결과:
 
-- **상관계수**: 0.038 (매우 약한 양의 상관관계)
-- **p-value**: 0.524 (유의미하지 않음)
-- **해석**: 유저 위치와 자기장 중심 위치 간에 상관관계가 거의 없으며, 통계적으로 유의미하지 않음.
+- **Phase 1:**
+    - 상관계수: -0.640572376133425
+    - p-value: 4.490554635969112e-05
+    - 해석: 유의미한 음의 상관관계가 있습니다. 즉, 히스토그램의 x값(거리)과 y값(빈도수) 간에 유의미한 음의 상관관계가 존재합니다.
+- **Phase 2:**
+    - 상관계수: -0.6434290218175496
+    - p-value: 4.0480149725718794e-05
+    - 해석: 유의미한 음의 상관관계가 있습니다. 즉, 히스토그램의 x값(거리)과 y값(빈도수) 간에 유의미한 음의 상관관계가 존재합니다.
+- **Phase 3:**
+    - 상관계수: -0.7489504124696674
+    - p-value: 3.488211673978302e-07
+    - 해석: 강한 음의 상관관계가 있습니다. 즉, 히스토그램의 x값(거리)과 y값(빈도수) 간에 강한 음의 상관관계가 존재합니다.
+- **Phase 4:**
+    - 상관계수: -0.7350075512021718
+    - p-value: 7.412121803432713e-07
+    - 해석: 강한 음의 상관관계가 있습니다. 즉, 히스토그램의 x값(거리)과 y값(빈도수) 간에 강한 음의 상관관계가 존재합니다.
+- **Phase 5:**
+    - 상관계수: -0.7321263032134597
+    - p-value: 8.611463651503739e-07
+    - 해석: 강한 음의 상관관계가 있습니다. 즉, 히스토그램의 x값(거리)과 y값(빈도수) 간에 강한 음의 상관관계가 존재합니다.
+- **Phase 6:**
+    - 상관계수: -0.6048640678104168
+    - p-value: 0.0001511163942786868
+    - 해석: 유의미한 음의 상관관계가 있습니다. 즉, 히스토그램의 x값(거리)과 y값(빈도수) 간에 유의미한 음의 상관관계가 존재합니다.
+- **Phase 7:**
+    - 상관계수: -0.5892087551875876
+    - p-value: 0.00024606444617736344
+    - 해석: 유의미한 음의 상관관계가 있습니다. 즉, 히스토그램의 x값(거리)과 y값(빈도수) 간에 유의미한 음의 상관관계가 존재합니다.
+- **Phase 8:**
+    - 상관계수: -0.7006037456435822
+    - p-value: 3.9598520616432805e-06
+    - 해석: 강한 음의 상관관계가 있습니다. 즉, 히스토그램의 x값(거리)과 y값(빈도수) 간에 강한 음의 상관관계가 존재합니다.
 
-### Phase 4
+### 결론:
 
-- **상관계수**: 0.037 (매우 약한 양의 상관관계)
-- **p-value**: 0.535 (유의미하지 않음)
-- **해석**: 유저 위치와 자기장 중심 위치 간에 상관관계가 거의 없으며, 통계적으로 유의미하지 않음.
-
-### Phase 5
-
-- **상관계수**: 0.030 (매우 약한 양의 상관관계)
-- **p-value**: 0.626 (유의미하지 않음)
-- **해석**: 유저 위치와 자기장 중심 위치 간에 상관관계가 거의 없으며, 통계적으로 유의미하지 않음.
-
-### Phase 6
-
-- **상관계수**: 0.073 (매우 약한 양의 상관관계)
-- **p-value**: 0.250 (유의미하지 않음)
-- **해석**: 유저 위치와 자기장 중심 위치 간에 상관관계가 거의 없으며, 통계적으로 유의미하지 않음.
-
-### Phase 7
-
-- **상관계수**: 0.064 (매우 약한 양의 상관관계)
-- **p-value**: 0.364 (유의미하지 않음)
-- **해석**: 유저 위치와 자기장 중심 위치 간에 상관관계가 거의 없으며, 통계적으로 유의미하지 않음.
-
-### Phase 8
-
-- **상관계수**: 0.083 (매우 약한 양의 상관관계)
-- **p-value**: 0.387 (유의미하지 않음)
-- **해석**: 유저 위치와 자기장 중심 위치 간에 상관관계가 거의 없으며, 통계적으로 유의미하지 않음.
-
-### 결론
-
-모든 페이즈에서 p-value가 0.05 이상이므로, 유저 위치와 자기장 중심 위치 간의 상관관계는 통계적으로 유의미하지 않다고 볼 수 있습니다. 따라서, 귀무가설(H0): "살아있는 유저들의 위치와 자기장 중심의 위치는 무관하다"를 기각할 수 없습니다.
-
-즉, 데이터에 따르면 살아있는 유저들의 위치가 자기장 중심의 위치에 영향을 미친다는 증거가 없습니다. 자기장은 무작위로 설정된다고 볼 수 있습니다.
+- 각 페이즈의 상관계수가 모두 음수이고, p-value가 0.05보다 작아 귀무가설(H0)을 기각할 수 있습니다. 이는 살아있는 유저들의 위치와 자기장 중심의 위치 간에 유의미한 음의 상관관계가 있음을 의미합니다.
+- 상관계수가 음수라는 것은 거리가 멀어질수록 빈도수가 줄어드는 경향이 있음을 나타냅니다.
+- 따라서, 자기장의 위치는 살아있는 유저들의 위치에 영향을 받으며, 유저들이 몰린 곳에서 멀어질수록 빈도수가 낮아짐을 알 수 있습니다.
